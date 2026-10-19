@@ -1,0 +1,51 @@
+{
+	"$schema": "https://biomejs.dev/schemas/2.5.15/schema.json",
+	"files": {
+		"includes": [
+			"backend/src/**",
+			"backend/test/**",
+			"frontend/app/**",
+			"frontend/components/**",
+			"frontend/lib/**",
+			"frontend/test/**",
+			"e2e/tests/**",
+			"e2e/playwright.config.ts",
+			"scripts/**"
+		]
+	},
+	"formatter": {
+		"enabled": false
+	},
+	"assist": {
+		"enabled": false
+	},
+	"linter": {
+		"enabled": true,
+		"rules": {
+			"preset": "recommended",
+			"suspicious": {
+				"noExplicitAny": "off",
+				"noArrayIndexKey": "off"
+			},
+			"style": {
+				"noNonNullAssertion": "off",
+				"useTemplate": "off"
+			},
+			"complexity": {
+				"noForEach": "off",
+				"noImportantStyles": "off"
+			},
+			"correctness": {
+				"noUnusedVariables": "error",
+				"noUnusedFunctionParameters": "off",
+				"useExhaustiveDependencies": "warn"
+			},
+			"a11y": {
+				"preset": "recommended"
+			},
+			"performance": {
+				"noImgElement": "off"
+			}
+		}
+	}
+}

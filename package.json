@@ -1,0 +1,27 @@
+{
+  "name": "voicesync-crm",
+  "private": true,
+  "scripts": {
+    "install:all": "npm install && npm --prefix backend install && npm --prefix frontend install && npm --prefix e2e install",
+    "dev:api": "npm --prefix backend run dev",
+    "dev:web": "npm --prefix frontend run dev",
+    "test": "npm --prefix backend test && npm --prefix frontend test",
+    "typecheck": "npm --prefix backend run typecheck && npm --prefix frontend run typecheck",
+    "build": "npm --prefix backend run build && npm --prefix frontend run build",
+    "e2e": "node e2e/run.mjs",
+    "contrast": "node frontend/scripts/contrast.mjs",
+    "lint": "biome lint .",
+    "secrets": "node scripts/check-secrets.mjs .",
+    "audit": "npm audit --audit-level=high && npm --prefix backend audit --audit-level=high && npm --prefix frontend audit --audit-level=high && npm --prefix e2e audit --audit-level=high",
+    "ci": "npm run lint && npm run secrets && npm run typecheck && npm run test && npm run contrast && npm run build",
+    "loadtest": "node scripts/loadtest.mjs",
+    "staging-check": "node scripts/staging-check.mjs"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.5.15"
+  },
+  "engines": {
+    "node": ">=22 <25"
+  },
+  "packageManager": "npm@10.9.7"
+}

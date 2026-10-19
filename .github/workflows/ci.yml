@@ -1,0 +1,63 @@
+name: CI
+on:
+  push: { branches: [main] }
+  pull_request:
+  schedule: [{ cron: "0 6 * * 1" }]   # weekly, so new advisories show up even when nobody pushes
+permissions: { contents: read }
+concurrency: { group: "ci-${{ github.ref }}", cancel-in-progress: true }
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            backend/package-lock.json
+            frontend/package-lock.json
+            e2e/package-lock.json
+      - name: Install (exact versions from the lock files)
+        run: npm ci && npm --prefix backend ci && npm --prefix frontend ci && npm --prefix e2e ci
+      - name: Lint
+        run: npm run lint
+      - name: Secret scan
+        run: npm run secrets
+      - name: Type check
+        run: npm run typecheck
+      - name: Tests (API, database migrations on real Postgres, web app)
+        run: npm test
+      - name: Colour contrast
+        run: npm run contrast
+      - name: Build
+        run: npm run build
+
+  e2e:
+    needs: checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version-file: .nvmrc, cache: npm, cache-dependency-path: "**/package-lock.json" }
+      - run: npm ci && npm --prefix backend ci && npm --prefix frontend ci && npm --prefix e2e ci
+      - run: npx --prefix e2e playwright install --with-deps chromium
+      - name: Browser tests (real Chromium, fake microphone, fake AI providers)
+        run: npm run e2e
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with: { name: e2e-results, path: e2e/test-results, retention-days: 7 }
+
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version-file: .nvmrc }
+      - name: Known vulnerabilities (high and critical fail the build)
+        run: npm run audit
