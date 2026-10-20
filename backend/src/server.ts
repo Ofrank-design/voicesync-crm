@@ -1,5 +1,4 @@
-```ts
-import "dotenv/config";
+﻿import "dotenv/config";
 import { loadConfig } from "./config";
 import { createApp } from "./app";
 import { ProviderManager } from "./providers/manager";
@@ -143,4 +142,3 @@ void main().catch((error) => {
   });
   process.exitCode = 1;
 });
-```
