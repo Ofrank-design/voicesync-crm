@@ -1,220 +1,61 @@
-
+#!/usr/bin/env node
+// Browser end to end run, for Windows, Mac and Linux.
+// Builds the website in a test mode, starts the test API (fake AI, in memory data) and the website, runs Playwright, then stops everything.
+//   npm run e2e                 run all browser tests
+//   npm run e2e -- --ui         open Playwright's visual UI (servers stay up until you close it)
+//   npm run e2e -- -g "landing" run only tests whose name matches
+// Needs a browser once:  npx --prefix e2e playwright install chromium     (or set CHROMIUM_PATH)
+// It never uses your real keys or your real .env files.
 import { execFileSync, spawn } from "node:child_process";
 import net from "node:net";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const FRONTEND = path.join(ROOT, "frontend");
-const BACKEND = path.join(ROOT, "backend");
-const E2E = path.join(ROOT, "e2e");
 const win = process.platform === "win32";
 const children = [];
+
+const inUse = (port) => new Promise((res) => { const s = net.connect(port, "127.0.0.1"); s.once("connect", () => { s.destroy(); res(true); }); s.once("error", () => res(false)); });
+const waitFor = async (url, what, ms = 60_000) => { const t0 = Date.now(); while (Date.now() - t0 < ms) { try { if ((await fetch(url)).ok) return; } catch { /* not up yet */ } await new Promise((r) => setTimeout(r, 500)); } throw new Error(`${what} did not start within ${ms / 1000} seconds. Check the messages above.`); };
+
+/** Starts a server in its own process group so the whole tree can be stopped later. */
+function start(name, args, cwd, env = {}) {
+  const child = spawn("npx", args, { cwd, env: { ...process.env, ...env }, stdio: ["ignore", "pipe", "pipe"], shell: win, detached: !win });
+  let tail = ""; for (const s of [child.stdout, child.stderr]) s.on("data", (d) => { tail = (tail + d).slice(-3000); });
+  child.on("exit", (code) => { if (!stopping) console.error(`\n${name} stopped unexpectedly (code ${code}). Last output:\n${tail}`); });
+  children.push(child); return child;
+}
 let stopping = false;
-
-const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-
-function executable(name) {
-  return path.join(
-    ROOT,
-    "node_modules",
-    ".bin",
-    win ? `${name}.cmd` : name
-  );
-}
-
-function packageExecutable(packageDir, relativePath) {
-  return path.join(packageDir, "node_modules", relativePath);
-}
-
-const NEXT_BIN = packageExecutable(FRONTEND, "next/dist/bin/next");
-const TSX_BIN = packageExecutable(BACKEND, "tsx/dist/cli.mjs");
-const PLAYWRIGHT_BIN = packageExecutable(E2E, "playwright/cli.js");
-
-const inUse = (port) =>
-  new Promise((resolve) => {
-    const socket = net.connect(port, "127.0.0.1");
-    socket.once("connect", () => {
-      socket.destroy();
-      resolve(true);
-    });
-    socket.once("error", () => resolve(false));
-  });
-
-async function waitFor(url, name, ms = 60000) {
-  const startTime = Date.now();
-  let lastError = "No response yet";
-
-  while (Date.now() - startTime < ms) {
-    try {
-      const response = await fetch(url);
-      if (response.ok) return;
-      lastError = `HTTP ${response.status}`;
-    } catch (error) {
-      lastError = error.message;
-    }
-
-    await sleep(500);
-  }
-
-  throw new Error(`${name} failed to start. Last check: ${lastError}`);
-}
-
-function start(name, command, args, cwd, env = {}) {
-  console.log(`\n[${name}] Launching: ${command} ${args.join(" ")}`);
-
-  const child = spawn(command, args, {
-    cwd,
-    env: { ...process.env, ...env },
-    stdio: ["ignore", "pipe", "pipe"],
-    windowsHide: true,
-    shell: false,
-    detached: !win,
-  });
-
-  let tail = "";
-
-  for (const [stream, target] of [
-    [child.stdout, process.stdout],
-    [child.stderr, process.stderr],
-  ]) {
-    stream.on("data", (data) => {
-      const output = data.toString();
-      tail = (tail + output).slice(-5000);
-      target.write(`[${name}] ${output}`);
-    });
-  }
-
-  child.on("error", (error) => {
-    console.error(`\n[${name}] Process launch failed: ${error.message}`);
-  });
-
-  child.on("exit", (code, signal) => {
-    if (!stopping) {
-      console.error(
-        `\n[${name}] Process exited. Code: ${code}, signal: ${signal}\n` +
-          `Last output:\n${tail || "(No output captured)"}`
-      );
-    }
-  });
-
-  children.push(child);
-  return child;
-}
-
 function stopAll() {
-  if (stopping) return;
   stopping = true;
-
-  for (const child of children) {
-    if (!child.pid) continue;
-
-    try {
-      if (win) {
-        const killer = spawn(
-          "taskkill",
-          ["/PID", String(child.pid), "/T", "/F"],
-          { stdio: "ignore", windowsHide: true }
-        );
-        killer.on("error", () => {});
-      } else {
-        process.kill(-child.pid, "SIGTERM");
-      }
-    } catch {
-      // Process may already have exited.
-    }
+  for (const c of children) {
+    try { if (win) spawn("taskkill", ["/pid", String(c.pid), "/T", "/F"], { stdio: "ignore" }); else process.kill(-c.pid, "SIGTERM"); } catch { /* already gone */ }
   }
 }
-
-for (const signal of ["SIGINT", "SIGTERM"]) {
-  process.on(signal, () => {
-    stopAll();
-    process.exit(130);
-  });
-}
+for (const sig of ["SIGINT", "SIGTERM"]) process.on(sig, () => { stopAll(); process.exit(130); });
 
 async function main() {
-  for (const port of [3000, 8000]) {
-    if (await inUse(port)) {
-      throw new Error(
-        `Port ${port} is already in use. Stop the process using it, then retry.`
-      );
-    }
-  }
+  for (const port of [3000, 8000]) if (await inUse(port)) throw new Error(`Port ${port} is already in use. Close whatever is running there (another dev server?) and try again.`);
 
-  execFileSync(
-    process.execPath,
-    [path.join(E2E, "fixtures", "make-audio.mjs")],
-    { cwd: ROOT, stdio: "inherit" }
-  );
+  execFileSync(process.execPath, [path.join(ROOT, "e2e", "fixtures", "make-audio.mjs")], { stdio: "ignore" });   // the fake microphone sound
 
   if (process.env.SKIP_BUILD !== "1") {
-    console.log("\nBuilding the website in test mode...");
-
-    execFileSync(
-      process.execPath,
-      [NEXT_BIN, "build"],
-      {
-        cwd: FRONTEND,
-        stdio: "inherit",
-        env: {
-          ...process.env,
-          VOICESYNC_ALLOW_LOCAL_BUILD: "1",
-          NEXT_PUBLIC_AUTH_MODE: "local",
-          NEXT_PUBLIC_API_BASE_URL: "http://localhost:8000",
-        },
-        windowsHide: true,
-      }
-    );
+    console.log("Building the website in test mode (about a minute)...");
+    try { execFileSync("npx", ["next", "build"], { cwd: path.join(ROOT, "frontend"), stdio: "inherit", shell: win, env: { ...process.env, VOICESYNC_ALLOW_LOCAL_BUILD: "1", NEXT_PUBLIC_AUTH_MODE: "local", NEXT_PUBLIC_API_BASE_URL: "http://localhost:8000" } }); }
+    catch { throw new Error("The website build failed. Fix the errors above first."); }
   }
+  console.log("Starting the test API and the website...");
+  start("test API", ["tsx", "test/e2e-server.ts"], path.join(ROOT, "backend"), { FRONTEND_ORIGIN: "http://localhost:3000" });
+  start("website", ["next", "start", "-p", "3000"], path.join(ROOT, "frontend"));
+  await waitFor("http://localhost:8000/api/live", "The test API");
+  await waitFor("http://localhost:3000/", "The website");
 
-  console.log("\nStarting the test API and website...");
-
-  start(
-    "test API",
-    process.execPath,
-    [TSX_BIN, "test/e2e-server.ts"],
-    BACKEND,
-    { FRONTEND_ORIGIN: "http://localhost:3000" }
-  );
-
-  start(
-    "website",
-    process.execPath,
-    [NEXT_BIN, "start", "-p", "3000"],
-    FRONTEND
-  );
-
-  await waitFor("http://127.0.0.1:8000/api/live", "Test API");
-  await waitFor("http://127.0.0.1:3000/", "Website");
-
-  console.log("\nBoth servers are ready. Running Playwright tests...\n");
-
-  const playwright = spawn(
-    process.execPath,
-    [PLAYWRIGHT_BIN, "test", ...process.argv.slice(2)],
-    {
-      cwd: E2E,
-      stdio: "inherit",
-      windowsHide: true,
-    }
-  );
-
-  const code = await new Promise((resolve, reject) => {
-    playwright.on("error", reject);
-    playwright.on("exit", (exitCode) => resolve(exitCode ?? 1));
+  console.log("Running the browser tests...\n");
+  const code = await new Promise((resolve) => {
+    const p = spawn("npx", ["playwright", "test", ...process.argv.slice(2)], { cwd: path.join(ROOT, "e2e"), stdio: "inherit", shell: win });
+    p.on("exit", (c) => resolve(c ?? 1));
   });
-
   return code;
 }
 
-main()
-  .then((code) => {
-    stopAll();
-    process.exitCode = code;
-  })
-  .catch((error) => {
-    console.error(`\nE2E FAILED: ${error.stack || error.message}`);
-    stopAll();
-    process.exitCode = 1;
-  });
+main().then((code) => { stopAll(); process.exit(code); }).catch((e) => { console.error(`\n${e.message}`); stopAll(); process.exit(1); });

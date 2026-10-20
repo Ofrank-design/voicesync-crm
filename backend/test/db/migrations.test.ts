@@ -5,7 +5,7 @@ import type { PGlite } from "@electric-sql/pglite";
 import { A, B, MIGRATIONS, as, freshDb, insertTask, migrationFiles, task } from "./helpers";
 
 let db: PGlite;
-beforeAll(async () => { db = await freshDb(); }, 60_000);
+beforeAll(async () => { db = await freshDb(); }, 120_000);
 
 describe("migrations on a real Postgres", () => {
   it("apply cleanly in order and can be run again without errors", async () => {

@@ -5,7 +5,7 @@
 //   node scripts/init-env.mjs --set ADMIN_USER_IDS=your-user-id      change one value in backend/.env later
 //   node scripts/init-env.mjs --set NEXT_PUBLIC_SITE_URL=https://x.com --file frontend/.env.local
 // Keys you paste are hidden. They are written only to the two files, which git ignores. Nothing is sent anywhere.
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync, chmodSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -21,26 +21,17 @@ export const TEXT_PROVIDERS = [
 
 /** Works out what kind of Supabase key this is, so the secret one never ends up in the website. */
 export function keyKind(key) {
-  if (!key) return "unknown";
   if (/^sb_secret_/.test(key)) return "secret";
   if (/^sb_publishable_/.test(key)) return "public";
-  const m = /^eyJ[\w-]+\.([\w-]+)\.[\w-]+\$/.exec(key);
-  if (m) { 
-    try { 
-      const role = JSON.parse(Buffer.from(m[1].replace(/-/g, "+").replace(/_/g, "/"), "base64").toString("utf8")).role; 
-      if (role === "service_role") return "secret"; 
-      if (role === "anon") return "public"; 
-    } catch { 
-      /* not decodable */ 
-    } 
-  }
+  const m = /^eyJ[\w-]+\.([\w-]+)\.[\w-]+$/.exec(key);
+  if (m) { try { const role = JSON.parse(Buffer.from(m[1].replace(/-/g, "+").replace(/_/g, "/"), "base64").toString("utf8")).role; if (role === "service_role") return "secret"; if (role === "anon") return "public"; } catch { /* not decodable */ } }
   return "unknown";
 }
 
 /** Returns a list of plain English problems with the answers. Empty means fine. */
 export function validate(a) {
   const p = [];
-  if (!/^https:\/\/[^\s/]+\.[^\s/]+\/?\$/.test(a.supabaseUrl ?? "")) p.push("The Supabase project URL should look like https://abcd1234.supabase.co");
+  if (!/^https:\/\/[^\s/]+\.[^\s/]+\/?$/.test(a.supabaseUrl ?? "")) p.push("The Supabase project URL should look like https://abcd1234.supabase.co");
   if (!a.anonKey) p.push("The public (anon) key is empty.");
   else if (keyKind(a.anonKey) === "secret") p.push("The key you gave as the PUBLIC key is the SECRET key. Use the anon (publishable) key here. The secret key must never go in the website.");
   if (!a.serviceKey) p.push("The secret (service role) key is empty.");
@@ -70,10 +61,10 @@ export function buildEnvFiles(a) {
 
 /** Changes or adds one KEY=VALUE line in an env file's text. */
 export function setValue(text, key, value) {
-  if (!/^[A-Z][A-Z0-9_]*\$/.test(key)) throw new Error(`"${key}" is not a valid setting name (use capital letters, numbers and underscores).`);
-  if (/[\(\r\\)n]/.test(value)) throw new Error("The value cannot contain a line break.");
+  if (!/^[A-Z][A-Z0-9_]*$/.test(key)) throw new Error(`"${key}" is not a valid setting name (use capital letters, numbers and underscores).`);
+  if (/[\r\n]/.test(value)) throw new Error("The value cannot contain a line break.");
   const re = new RegExp(`^${key}=.*$`, "m");
-  return re.test(text) ? text.replace(re, () => `${key}=${value}`) : text.replace(/\n*\$/, "\n") + `${key}=${value}\n`;
+  return re.test(text) ? text.replace(re, () => `${key}=${value}`) : text.replace(/\n*$/, "\n") + `${key}=${value}\n`;
 }
 
 async function realIo() {
@@ -104,37 +95,26 @@ export async function run(argv, { io, root = path.resolve(path.dirname(fileURLTo
   a.supabaseUrl = await own.ask("1. Project URL (https://....supabase.co): ");
   a.anonKey = await own.ask("2. PUBLIC key (anon or publishable): ", { secret: true });
   a.serviceKey = await own.ask("3. SECRET key (service_role): ", { secret: true });
-  
-  own.say("\nText provider (picks the task details out of what you said):"); 
-  TEXT_PROVIDERS.forEach((t, i) => { own.say(`   ${i + 1}. ${t.label}`); });
-  
+  own.say("\nText provider (picks the task details out of what you said):"); TEXT_PROVIDERS.forEach((t, i) => own.say(`   ${i + 1}. ${t.label}`));
   const pick = await own.ask("4. Number [1 = Anthropic]: "); a.provider = TEXT_PROVIDERS[(Number(pick || 1) || 0) - 1]?.id;
   a.openaiKey = await own.ask("5. OpenAI key (used for speech to text): ", { secret: true });
-  if (a.provider && a.provider !== "openai") {
-    a.textKey = await own.ask(`6. ${TEXT_PROVIDERS.find((t) => t.id === a.provider)?.label} key: `, { secret: true });
-  }
-  a.model = await own.ask("7. Extraction model ID: ");
-  
+  if (a.provider && a.provider !== "openai") a.textKey = await own.ask(`6. ${TEXT_PROVIDERS.find((t) => t.id === a.provider).label} key: `, { secret: true });
+  a.model = await own.ask("7. Model ID for the text provider (copy it from their models page): ");
+  own.close?.();
   const problems = validate(a);
-  if (problems.length) {
-    own.say("\nProblems found with configuration options:\n" + problems.map((p) => `- ${p}`).join("\n") + "\n");
-    own.close();
-    return;
-  }
-  
-  const generated = buildEnvFiles(a);
-  if (!existsSync(path.dirname(files.backend))) mkdirSync(path.dirname(files.backend), { recursive: true });
-  if (!existsSync(path.dirname(files.frontend))) mkdirSync(path.dirname(files.frontend), { recursive: true });
-  
-  writeFileSync(files.backend, generated.backend, "utf8");
-  writeFileSync(files.frontend, generated.frontend, "utf8");
-  own.say(`\nSuccess! Created files:\n  - backend/.env\n  - frontend/.env.local\n`);
-  own.close();
+  if (problems.length) throw new Error(`Nothing was written. Please fix:\n  - ${problems.join("\n  - ")}`);
+  const out = buildEnvFiles(a);
+  mkdirSync(path.dirname(files.backend), { recursive: true }); mkdirSync(path.dirname(files.frontend), { recursive: true });
+  writeFileSync(files.backend, out.backend, "utf8"); writeFileSync(files.frontend, out.frontend, "utf8");
+  try { chmodSync(files.backend, 0o600); } catch { /* not supported on Windows */ }
+  return { created: Object.values(files).map((f) => path.relative(root, f)) };
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
-  run(process.argv.slice(2)).catch((err) => {
-    console.error("\nError: " + err.message + "\n");
-    process.exit(1);
-  });
+  try {
+    const r = await run(process.argv.slice(2));
+    if (r.created) console.log(`\nCreated:\n  ${r.created.join("\n  ")}\n\nNext: open backend\\.env in VS Code and glance through it. Then run:  npm run dev:api\nAfter you sign up in the app, set yourself as admin with:\n  node scripts/init-env.mjs --set ADMIN_USER_IDS=YOUR_USER_ID`);
+    else console.log(`Updated ${r.key} in ${r.changed}. Restart the API (Ctrl+C, then npm run dev:api).`);
+    process.exit(0);
+  } catch (e) { console.error(`\n${e.message}`); process.exit(1); }
 }

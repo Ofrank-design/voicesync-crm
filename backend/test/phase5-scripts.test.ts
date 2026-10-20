@@ -53,7 +53,7 @@ describe("rate limits protect the expensive endpoints", () => {
     for (let i = 0; i < 12; i++) codes.push((await request(app).post("/api/voice-sync").set(bearer(`u${i}`)).attach("audio", WEBM, "a.webm")).status);
     expect(codes.slice(0, 10).every((c) => c === 200)).toBe(true); expect(codes.slice(10)).toEqual([429, 429]);
     const limited = await request(app).post("/api/voice-sync").set(bearer("u99")).attach("audio", WEBM, "a.webm");
-    expect(limited.body.error).toMatchObject({ code: "rate_limited" }); expect(limited.body.error.message).toMatch(/wait a minute/i); expect(limited.headers["ratelimit-limit"] ?? limited.headers.ratelimit).toBeTruthy();
+    expect(limited.body.error).toMatchObject({ code: "rate_limited" }); expect(limited.body.error.message).toMatch(/wait a minute/i); expect(limited.headers["ratelimit-limit"] ?? limited.headers["ratelimit"]).toBeTruthy();
   });
   it("a general request flood is limited too, and the limit does not apply to the health checks' neighbours unfairly", async () => {
     const app = dev(); let limited = 0;
